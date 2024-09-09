@@ -1,5 +1,4 @@
-use clap::value_t_or_exit;
-use clap::{App, Arg};
+use clap::Parser;
 use futures_util::future::TryFutureExt;
 use futures_util::future::{self, Either};
 use lazy_static::lazy_static;
@@ -12,7 +11,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::RwLock;
 use std::task::{Context, Poll};
-use std::time;
+use std::time::Duration;
 
 lazy_static! {
     static ref SESSION_COOKIES: RwLock<HashMap<u32, cookie::CookieJar>> = RwLock::default();
@@ -278,62 +277,48 @@ impl trawler::AsyncShutdown for WebClient {
     }
 }
 
+#[derive(Clone, Debug, Parser)]
+#[command(
+    name = "trawler",
+    version = "0.1",
+    about = "Benchmark a lobste.rs Rails installation"
+)]
+struct Options {
+    /// Reuest load scale factor for workload
+    #[arg(long, default_value = "1.0")]
+    scale: f64,
+
+    /// Number of allowed concurrent requests
+    #[arg(long, default_value = "50")]
+    in_flight: usize,
+
+    /// Set if the backend must be primed with initial stories and comments.
+    #[arg(long, default_value = "false")]
+    prime: bool,
+
+    /// Benchmark runtime in seconds
+    #[arg(short = 'r', long, default_value = "30")]
+    runtime: u64,
+
+    /// Use file-based serialized HdrHistograms. There are multiple histograms,
+    /// two for each lobsters request.
+    #[arg(long)]
+    histogram: Option<String>,
+
+    #[arg(long, env = "URL-PREFIX", default_value = "http://localhost:3000")]
+    prefix: Option<String>,
+}
+
 fn main() {
-    let args = App::new("trawler")
-        .version("0.1")
-        .about("Benchmark a lobste.rs Rails installation")
-        .arg(
-            Arg::with_name("scale")
-                .long("scale")
-                .takes_value(true)
-                .default_value("1.0")
-                .help("Scaling factor for workload"),
-        )
-        .arg(
-            Arg::with_name("prime")
-                .long("prime")
-                .help("Set if the backend must be primed with initial stories and comments."),
-        )
-        .arg(
-            Arg::with_name("runtime")
-                .short("r")
-                .long("runtime")
-                .takes_value(true)
-                .default_value("30")
-                .help("Benchmark runtime in seconds"),
-        )
-        .arg(
-            Arg::with_name("histogram")
-                .long("histogram")
-                .help("Use file-based serialized HdrHistograms")
-                .takes_value(true)
-                .long_help(
-                    "If the file already exists, the existing histogram is extended.\
-                     There are two histograms, written out in order: \
-                     sojourn and remote.",
-                ),
-        )
-        .arg(
-            Arg::with_name("prefix")
-                .value_name("URL-PREFIX")
-                .takes_value(true)
-                .default_value("http://localhost:3000")
-                .index(1),
-        )
-        .get_matches();
+    let options = Options::parse();
 
     let mut wl = trawler::WorkloadBuilder::default();
-    wl.scale(value_t_or_exit!(args, "scale", f64))
-        .time(time::Duration::from_secs(value_t_or_exit!(
-            args, "runtime", u64
-        )));
+    wl.scale(options.scale)
+        .time(Duration::new(options.runtime, 0));
 
-    if let Some(h) = args.value_of("histogram") {
-        wl.with_histogram(h);
+    if let Some(ref h) = options.histogram {
+        wl.with_histogram(&h);
     }
 
-    wl.run(
-        WebClient::new(args.value_of("prefix").unwrap()),
-        args.is_present("prime"),
-    );
+    wl.run(WebClient::new(&options.prefix.unwrap()), options.prime);
 }
