@@ -316,8 +316,8 @@ fn main() {
     wl.scale(options.scale)
         .time(Duration::new(options.runtime, 0));
 
-    if let Some(ref h) = options.histogram {
-        wl.with_histogram(&h);
+    if let Some(h) = options.histogram {
+        wl.with_histogram(h.clone());
     }
 
     wl.run(WebClient::new(&options.prefix.unwrap()), options.prime);

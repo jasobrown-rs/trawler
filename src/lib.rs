@@ -38,13 +38,13 @@ include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 pub const BASE_OPS_PER_MIN: usize = 46;
 
 /// Set the parameters for a new Lobsters-like workload.
-pub struct WorkloadBuilder<'a> {
+pub struct WorkloadBuilder<> {
     load: execution::Workload,
-    histogram_file: Option<&'a str>,
+    histogram_file: Option<String>,
     max_in_flight: usize,
 }
 
-impl<'a> Default for WorkloadBuilder<'a> {
+impl Default for WorkloadBuilder {
     fn default() -> Self {
         WorkloadBuilder {
             load: execution::Workload {
@@ -58,7 +58,7 @@ impl<'a> Default for WorkloadBuilder<'a> {
     }
 }
 
-impl<'a> WorkloadBuilder<'a> {
+impl WorkloadBuilder {
     /// Set the scaling factor for the workload.
     ///
     /// A factor of 1 generates a workload commensurate with what the [real lobste.rs
@@ -86,13 +86,13 @@ impl<'a> WorkloadBuilder<'a> {
 
     /// Instruct the load generator to store raw histogram data of request latencies into the given
     /// file upon completion.
-    pub fn with_histogram<'this>(&'this mut self, path: &'a str) -> &'this mut Self {
+    pub fn with_histogram(&mut self, path: String) -> &mut Self {
         self.histogram_file = Some(path);
         self
     }
 }
 
-impl<'a> WorkloadBuilder<'a> {
+impl WorkloadBuilder {
     /// Run this workload with clients spawned from the given factory.
     ///
     /// If `prime` is true, the database will be seeded with stories and comments according to the
@@ -125,7 +125,7 @@ impl<'a> WorkloadBuilder<'a> {
         println!("# generated ops/s: {:.2}", generated_per_sec);
         println!("# dropped requests: {}", dropped);
 
-        if let Some(h) = self.histogram_file {
+        if let Some(ref h) = self.histogram_file {
             match fs::File::create(h) {
                 Ok(mut f) => {
                     use hdrhistogram::serialization::interval_log;
