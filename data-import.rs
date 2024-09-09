@@ -27,7 +27,7 @@ fn main() {
         ).unwrap();
 
         let stats = File::open(&*stats).map(BufReader::new).unwrap();
-        for line in stats.lines().filter_map(Result::ok) {
+        for line in stats.lines().map_while(Result::ok) {
             let mut fields = line.split_whitespace();
             f.write_all(
                 format!("({}, {}),", fields.next().unwrap(), fields.next().unwrap()).as_bytes(),
