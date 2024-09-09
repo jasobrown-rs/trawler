@@ -1,8 +1,8 @@
 [package]
 name = "trawler"
-version = "0.11.0-alpha.7"
+version = "0.12.0-alpha.1"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT OR Apache-2.0"
 
 readme = "README.md"
@@ -14,9 +14,9 @@ categories = ["web-programming", "command-line-utilities", "development-tools::p
 
 build = "data-import.rs"
 
-[badges]
-travis-ci = { repository = "jonhoo/trawler" }
-maintenance = { status = "experimental" }
+#[badges]
+# travis-ci = { repository = "jonhoo/trawler" }
+# maintenance = { status = "experimental" }
 
 [features]
 cli = ["clap", "hyper", "cookie", "http", "url", "regex", "lazy_static"]
