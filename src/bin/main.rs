@@ -1,13 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
-use futures_util::future::TryFutureExt;
-use futures_util::future::{self, Either};
 use lazy_static::lazy_static;
+use reqwest::{header, Client, StatusCode};
 use trawler::{LobstersRequest, RequestProcessor, TrawlerRequest, Vote};
 
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -18,13 +16,13 @@ lazy_static! {
 #[derive(Clone)]
 struct WebClient {
     prefix: url::Url,
-    client: hyper::Client<hyper::client::HttpConnector>,
+    client: Client,
 }
 
 impl WebClient {
     fn new(prefix: &str) -> Self {
         let prefix = url::Url::parse(prefix).unwrap();
-        let client = hyper::Client::new();
+        let client = Client::new();
         WebClient { prefix, client }
     }
 
@@ -36,42 +34,33 @@ impl WebClient {
             }
         }
 
-        let url = hyper::Uri::from_str(self.prefix.join("login").unwrap().as_ref()).unwrap();
-        let mut req = hyper::Request::post(url);
-        let mut s = url::form_urlencoded::Serializer::new(String::new());
-        s.append_pair("utf8", "✓");
-        s.append_pair("email", &format!("user{}", uid));
-        //s.append_pair("email", "test");
-        s.append_pair("password", "test");
-        s.append_pair("commit", "Login");
-        s.append_pair("referer", self.prefix.as_ref());
-        req.headers_mut().unwrap().insert(
-            http::header::CONTENT_TYPE,
-            http::HeaderValue::from_static("application/x-www-form-urlencoded"),
-        );
-        let req = req.body(s.finish().into()).unwrap();
+        let mut params = HashMap::new();
+        params.insert("utf8", "✓");
+        let email = &format!("user{}", uid);
+        params.insert("email", email);
+        params.insert("password", "test");
+        params.insert("commit", "Login");
+        params.insert("referer", self.prefix.as_ref());
 
-        let req = self.client.request(req);
-        tokio::block_on(async move {
-            let res = req.await?;
-            if res.status() != hyper::StatusCode::FOUND {
-                let body = hyper::body::to_bytes(res.into_body()).await?;
-                panic!(
-                    "Failed to log in as user{}/test. Make sure to apply the patches!\n{}",
-                    uid,
-                    ::std::str::from_utf8(&*body).unwrap(),
-                );
-            }
+        let url = self.prefix.join("login").unwrap();
+        let res = self.client.post(url).form(&params).send().await?;
 
-            let mut cookie = cookie::CookieJar::new();
-            for c in res.headers().get_all(hyper::header::SET_COOKIE) {
-                let c = cookie::Cookie::parse(c.to_str().unwrap().to_string()).unwrap();
-                cookie.add(c);
-            }
+        if res.status() != StatusCode::FOUND {
+            let body = res.text().await?;
+            panic!(
+                "Failed to log in as user{}/test. Make sure to apply the patches!\n{}",
+                uid, body,
+            );
+        }
 
-            SESSION_COOKIES.write().unwrap().insert(uid, cookie.clone());
-            Ok(cookie)
-        })
+        let mut cookies = cookie::CookieJar::new();
+        for cookie in res.cookies() {
+            let c = cookie::Cookie::parse(format!("{:?}", cookie)).unwrap();
+            cookies.add(c);
+        }
+
+        SESSION_COOKIES.write().unwrap().insert(uid, cookies.clone());
+        Ok(cookies)
     }
 }
 
@@ -85,31 +74,20 @@ impl RequestProcessor for WebClient {
             ..
         }: TrawlerRequest,
     ) -> Result<()> {
-        let mut expected = hyper::StatusCode::OK;
+        let mut expected = StatusCode::OK;
         let mut req = match req {
-            LobstersRequest::Frontpage => {
-                let url = hyper::Uri::from_str(self.prefix.as_ref()).unwrap();
-                hyper::Request::get(url).body(hyper::Body::empty()).unwrap()
-            }
+            LobstersRequest::Frontpage => self.client.get(self.prefix.as_ref()),
             LobstersRequest::Recent => {
-                let url =
-                    hyper::Uri::from_str(self.prefix.join("recent").unwrap().as_ref()).unwrap();
-                hyper::Request::get(url).body(hyper::Body::empty()).unwrap()
+                let url = self.prefix.join("recent").unwrap();
+                self.client.get(url)
             }
             LobstersRequest::Comments => {
-                let url =
-                    hyper::Uri::from_str(self.prefix.join("comments").unwrap().as_ref()).unwrap();
-                hyper::Request::get(url).body(hyper::Body::empty()).unwrap()
+                let url = self.prefix.join("comments").unwrap();
+                self.client.get(url)
             }
             LobstersRequest::User(uid) => {
-                let url = hyper::Uri::from_str(
-                    self.prefix
-                        .join(&format!("u/user{}", uid))
-                        .unwrap()
-                        .as_ref(),
-                )
-                .unwrap();
-                hyper::Request::get(url).body(hyper::Body::empty()).unwrap()
+                let url = self.prefix.join(&format!("u/user{}", uid)).unwrap();
+                self.client.get(url)
             }
             LobstersRequest::Login => {
                 self.get_cookie_for(uid.unwrap()).await?;
@@ -117,127 +95,95 @@ impl RequestProcessor for WebClient {
             }
             LobstersRequest::Logout => {
                 /*
-                let url =
-                    hyper::Uri::from_str(self.prefix.join("logout").unwrap().as_ref()).unwrap();
-                hyper::Request::new(hyper::Method::Post, url)
+                let url = self.prefix.join("logout").unwrap();
+                self.client.post(self.prefix)
                 */
                 return Ok(());
             }
             LobstersRequest::Story(id) => {
-                let url = hyper::Uri::from_str(
-                    self.prefix
-                        .join("s/")
-                        .unwrap()
-                        .join(::std::str::from_utf8(&id[..]).unwrap())
-                        .unwrap()
-                        .as_ref(),
-                )
-                .unwrap();
-                hyper::Request::get(url).body(hyper::Body::empty()).unwrap()
+                let url = self
+                    .prefix
+                    .join("s/")
+                    .unwrap()
+                    .join(::std::str::from_utf8(&id[..]).unwrap())
+                    .unwrap();
+                self.client.get(url)
             }
             LobstersRequest::StoryVote(story, v) => {
-                let url = hyper::Uri::from_str(
-                    self.prefix
-                        .join(&format!(
-                            "stories/{}/{}",
-                            ::std::str::from_utf8(&story[..]).unwrap(),
-                            match v {
-                                Vote::Up => "upvote",
-                                Vote::Down => "unvote",
-                            }
-                        ))
-                        .unwrap()
-                        .as_ref(),
-                )
-                .unwrap();
-                hyper::Request::post(url)
-                    .body(hyper::Body::empty())
-                    .unwrap()
+                let url = self
+                    .prefix
+                    .join(&format!(
+                        "stories/{}/{}",
+                        ::std::str::from_utf8(&story[..]).unwrap(),
+                        match v {
+                            Vote::Up => "upvote",
+                            Vote::Down => "unvote",
+                        }
+                    ))
+                    .unwrap();
+                self.client.post(url)
             }
             LobstersRequest::CommentVote(comment, v) => {
-                let url = hyper::Uri::from_str(
-                    self.prefix
-                        .join(&format!(
-                            "comments/{}/{}",
-                            ::std::str::from_utf8(&comment[..]).unwrap(),
-                            match v {
-                                Vote::Up => "upvote",
-                                Vote::Down => "unvote",
-                            }
-                        ))
-                        .unwrap()
-                        .as_ref(),
-                )
-                .unwrap();
-                hyper::Request::post(url)
-                    .body(hyper::Body::empty())
-                    .unwrap()
+                let url = self
+                    .prefix
+                    .join(&format!(
+                        "comments/{}/{}",
+                        ::std::str::from_utf8(&comment[..]).unwrap(),
+                        match v {
+                            Vote::Up => "upvote",
+                            Vote::Down => "unvote",
+                        }
+                    ))
+                    .unwrap();
+                self.client.post(url)
             }
             LobstersRequest::Submit { id, title } => {
-                expected = hyper::StatusCode::FOUND;
+                expected = StatusCode::FOUND;
 
-                let url =
-                    hyper::Uri::from_str(self.prefix.join("stories").unwrap().as_ref()).unwrap();
-                let mut req = hyper::Request::post(url);
-                let mut s = url::form_urlencoded::Serializer::new(String::new());
-                s.append_pair("commit", "Submit");
-                s.append_pair("story[short_id]", ::std::str::from_utf8(&id[..]).unwrap());
-                s.append_pair("story[tags_a][]", "test");
-                s.append_pair("story[title]", &title);
-                s.append_pair("story[description]", "to infinity");
-                s.append_pair("utf8", "✓");
-                req.headers_mut().unwrap().insert(
-                    http::header::CONTENT_TYPE,
-                    http::HeaderValue::from_static("application/x-www-form-urlencoded"),
-                );
-                req.body(s.finish().into()).unwrap()
+                let mut params = HashMap::new();
+                params.insert("commit", "Submit");
+                params.insert("story[short_id]", ::std::str::from_utf8(&id[..]).unwrap());
+                params.insert("story[tags_a][]", "test");
+                params.insert("story[title]", &title);
+                params.insert("story[description]", "to infinity");
+                params.insert("utf8", "✓");
+
+                let url = self.prefix.join("stories").unwrap();
+                self.client.post(url).form(&params)
             }
             LobstersRequest::Comment { id, story, parent } => {
-                let url =
-                    hyper::Uri::from_str(self.prefix.join("comments").unwrap().as_ref()).unwrap();
-                let mut req = hyper::Request::post(url);
-                let mut s = url::form_urlencoded::Serializer::new(String::new());
-                s.append_pair("short_id", ::std::str::from_utf8(&id[..]).unwrap());
-                s.append_pair("comment", "moar benchmarking");
-                if let Some(parent) = parent {
-                    s.append_pair(
-                        "parent_comment_short_id",
-                        ::std::str::from_utf8(&parent[..]).unwrap(),
-                    );
+                let mut params = HashMap::new();
+                params.insert("short_id", ::std::str::from_utf8(&id[..]).unwrap());
+                params.insert("comment", "moar benchmarking");
+                if let Some(_parent) = parent {
+                    // params.insert(
+                    //     "parent_comment_short_id",
+                    //     ::std::str::from_utf8(&parent[..]).unwrap(),
+                    // );
                 }
-                s.append_pair("story_id", ::std::str::from_utf8(&story[..]).unwrap());
-                s.append_pair("utf8", "✓");
-                req.headers_mut().unwrap().insert(
-                    http::header::CONTENT_TYPE,
-                    http::HeaderValue::from_static("application/x-www-form-urlencoded"),
-                );
-                req.body(s.finish().into()).unwrap()
+                params.insert("story_id", ::std::str::from_utf8(&story[..]).unwrap());
+                params.insert("utf8", "✓");
+
+                let url = self.prefix.join("comments").unwrap();
+                self.client.post(url).form(&params)
             }
         };
 
-        let req = if let Some(uid) = uid {
-            Either::Left(WebClient::get_cookie_for(self, uid).map_ok(move |cookies| {
-                for c in cookies.iter() {
-                    req.headers_mut().insert(
-                        hyper::header::COOKIE,
-                        hyper::header::HeaderValue::from_str(&format!("{}", c)).unwrap(),
-                    );
-                }
-                req
-            }))
-        } else {
-            Either::Right(future::ready(Ok(req)))
+        if let Some(uid) = uid {
+            let cookies = WebClient::get_cookie_for(self, uid).await?;
+            for cookie in cookies.iter() {
+                let c = format!("{}", cookie);
+                req = req.header(header::COOKIE, c);
+            }
         };
 
-        let client = self.client.clone();
-        let res = client.request(req.await?).await?;
+        let res = req.send().await?;
         if res.status() != expected {
             let status = res.status();
-            let body = hyper::body::to_bytes(res.into_body()).await?;
+            let body = res.text().await?;
             panic!(
                 "{:?} status response. You probably forgot to prime.\n{}",
-                status,
-                ::std::str::from_utf8(&*body).unwrap(),
+                status, body,
             );
         }
         Ok(())
