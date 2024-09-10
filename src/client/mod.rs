@@ -28,7 +28,7 @@ pub trait RequestProcessor {
     /// Set up the target environment.
     ///
     /// `prime` indicates if the environment should be cleanly prepared to prime the data.
-    async fn setup(prime: bool) -> Result<()>;
+    async fn setup(&mut self, prime: bool) -> Result<()>;
 
     /// Asynchronously process the request.
     async fn process(&mut self, request: TrawlerRequest) -> Result<()>;
