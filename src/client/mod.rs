@@ -1,4 +1,5 @@
-use std::future::Future;
+use anyhow::Result;
+use async_trait::async_trait;
 
 /// A lobste.rs request made as part of a workload.
 ///
@@ -21,15 +22,14 @@ pub struct TrawlerRequest {
     pub is_priming: bool,
 }
 
-/// Asynchronous client shutdown.
-///
-/// The tokio runtime will not be shut down until the returned future resolves.
-pub trait AsyncShutdown {
-    /// A future that will resolve once client shutdown has finished.
-    type Future: Future<Output = ()>;
+/// The interface for handling `TrawlerRequest`s.
+#[async_trait]
+pub trait RequestProcessor {
+    /// Asynchronously process the request.
+    async fn process(&mut self, request: TrawlerRequest) -> Result<()>;
 
-    /// Start the shutdown process.
-    fn shutdown(self) -> Self::Future;
+    /// Cleanly shutdown the processor.
+    async fn shutdown(&mut self) -> Result<()>;
 }
 
 /// A unique lobste.rs six-character story id.

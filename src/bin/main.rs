@@ -1,16 +1,14 @@
+use anyhow::Result;
+use async_trait::async_trait;
 use clap::Parser;
 use futures_util::future::TryFutureExt;
 use futures_util::future::{self, Either};
 use lazy_static::lazy_static;
-use tower_service::Service;
-use trawler::{LobstersRequest, TrawlerRequest, Vote};
+use trawler::{LobstersRequest, RequestProcessor, TrawlerRequest, Vote};
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::RwLock;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 lazy_static! {
@@ -30,15 +28,11 @@ impl WebClient {
         WebClient { prefix, client }
     }
 
-    fn get_cookie_for(
-        &self,
-        uid: u32,
-    ) -> Pin<Box<dyn Future<Output = Result<cookie::CookieJar, hyper::Error>> + Send + 'static>>
-    {
+    async fn get_cookie_for(&self, uid: u32) -> Result<cookie::CookieJar> {
         {
             let cookies = SESSION_COOKIES.read().unwrap();
             if let Some(cookie) = cookies.get(&uid) {
-                return Box::pin(future::ready(Ok(cookie.clone())));
+                return Ok(cookie.clone());
             }
         }
 
@@ -58,7 +52,7 @@ impl WebClient {
         let req = req.body(s.finish().into()).unwrap();
 
         let req = self.client.request(req);
-        Box::pin(async move {
+        tokio::block_on(async move {
             let res = req.await?;
             if res.status() != hyper::StatusCode::FOUND {
                 let body = hyper::body::to_bytes(res.into_body()).await?;
@@ -81,35 +75,16 @@ impl WebClient {
     }
 }
 
-impl Service<bool> for WebClient {
-    type Response = Self;
-    type Error = hyper::Error;
-    type Future = futures_util::future::Ready<Result<Self::Response, Self::Error>>;
-    fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-    fn call(&mut self, _: bool) -> Self::Future {
-        eprintln!("note: did not re-create backend as lobsters client did not implement setup()");
-        eprintln!("note: if priming fails, make sure you have run the lobsters setup scripts");
-        futures_util::future::ready(Ok(self.clone()))
-    }
-}
-
-impl Service<TrawlerRequest> for WebClient {
-    type Response = ();
-    type Error = hyper::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
-    fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-    fn call(
+#[async_trait]
+impl RequestProcessor for WebClient {
+    async fn process(
         &mut self,
         TrawlerRequest {
             user: uid,
             page: req,
             ..
         }: TrawlerRequest,
-    ) -> Self::Future {
+    ) -> Result<()> {
         let mut expected = hyper::StatusCode::OK;
         let mut req = match req {
             LobstersRequest::Frontpage => {
@@ -137,7 +112,8 @@ impl Service<TrawlerRequest> for WebClient {
                 hyper::Request::get(url).body(hyper::Body::empty()).unwrap()
             }
             LobstersRequest::Login => {
-                return Box::pin(self.get_cookie_for(uid.unwrap()).map_ok(|_| ()));
+                self.get_cookie_for(uid.unwrap()).await?;
+                return Ok(());
             }
             LobstersRequest::Logout => {
                 /*
@@ -145,7 +121,7 @@ impl Service<TrawlerRequest> for WebClient {
                     hyper::Uri::from_str(self.prefix.join("logout").unwrap().as_ref()).unwrap();
                 hyper::Request::new(hyper::Method::Post, url)
                 */
-                return Box::pin(future::ready(Ok(())));
+                return Ok(());
             }
             LobstersRequest::Story(id) => {
                 let url = hyper::Uri::from_str(
@@ -254,26 +230,21 @@ impl Service<TrawlerRequest> for WebClient {
         };
 
         let client = self.client.clone();
-        Box::pin(async move {
-            let res = client.request(req.await?).await?;
-            if res.status() != expected {
-                let status = res.status();
-                let body = hyper::body::to_bytes(res.into_body()).await?;
-                panic!(
-                    "{:?} status response. You probably forgot to prime.\n{}",
-                    status,
-                    ::std::str::from_utf8(&*body).unwrap(),
-                );
-            }
-            Ok(())
-        })
+        let res = client.request(req.await?).await?;
+        if res.status() != expected {
+            let status = res.status();
+            let body = hyper::body::to_bytes(res.into_body()).await?;
+            panic!(
+                "{:?} status response. You probably forgot to prime.\n{}",
+                status,
+                ::std::str::from_utf8(&*body).unwrap(),
+            );
+        }
+        Ok(())
     }
-}
 
-impl trawler::AsyncShutdown for WebClient {
-    type Future = futures_util::future::Ready<()>;
-    fn shutdown(self) -> Self::Future {
-        futures_util::future::ready(())
+    async fn shutdown(&mut self) -> Result<()> {
+        Ok(())
     }
 }
 

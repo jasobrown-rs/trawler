@@ -19,6 +19,8 @@ build = "data-import.rs"
 # maintenance = { status = "experimental" }
 
 [dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
 crossbeam-channel = "0.5"
 futures-core = "0.3.0"
 futures-util = "0.3.0"

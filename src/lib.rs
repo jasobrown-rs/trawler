@@ -22,7 +22,8 @@
 #![deny(missing_docs)]
 
 mod client;
-pub use self::client::{AsyncShutdown, LobstersRequest, TrawlerRequest, Vote};
+
+pub use self::client::{LobstersRequest, RequestProcessor, TrawlerRequest, Vote};
 pub use self::client::{CommentId, StoryId, UserId};
 
 mod execution;
@@ -104,18 +105,13 @@ impl WorkloadBuilder {
     /// The provided client must be able to (asynchronously) create a `Service<TrawlerRequest>`. To
     /// do so, it must implement `Service<bool>`, where the boolean parameter indicates whether
     /// the database is also scheduled to be primed before the workload begins.
-    pub fn run<MS>(&self, client: MS, prime: bool)
+    pub fn run<T>(&self, client: T, prime: bool)
     where
-        MS: tower_make::MakeService<bool, client::TrawlerRequest>,
-        MS::MakeError: std::fmt::Debug,
-        <MS::Service as tower_service::Service<client::TrawlerRequest>>::Future: Send + 'static,
-        MS::Error: std::fmt::Debug + Send + 'static,
-        MS::Response: Send + 'static,
-        MS::Service: client::AsyncShutdown,
+        T: RequestProcessor + Clone + Send + 'static
     {
         // actually run the workload
         let (start, generated_per_sec, timing, dropped) =
-            execution::harness::run(self.load.clone(), self.max_in_flight, client, prime);
+            execution::harness::run(self.load.clone(), self.max_in_flight, client, prime).unwrap();
 
         // all done!
         println!(
