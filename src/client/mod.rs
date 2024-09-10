@@ -25,6 +25,11 @@ pub struct TrawlerRequest {
 /// The interface for handling `TrawlerRequest`s.
 #[async_trait]
 pub trait RequestProcessor {
+    /// Set up the target environment.
+    ///
+    /// `prime` indicates if the environment should be cleanly prepared to prime the data.
+    async fn setup(prime: bool) -> Result<()>;
+
     /// Asynchronously process the request.
     async fn process(&mut self, request: TrawlerRequest) -> Result<()>;
 

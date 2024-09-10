@@ -66,6 +66,10 @@ impl WebClient {
 
 #[async_trait]
 impl RequestProcessor for WebClient {
+    async fn setup(_prime: bool) -> Result<()> {
+        return Ok(())
+    }
+
     async fn process(
         &mut self,
         TrawlerRequest {
