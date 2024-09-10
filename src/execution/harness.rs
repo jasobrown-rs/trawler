@@ -114,6 +114,8 @@ where
     eprintln!("--> priming database");
     let start = time::Instant::now();
 
+    client.clone().data_prime_init().await?;
+
     // then, log in all the users
     let mut futs = FuturesUnordered::new();
     for uid in 0..sampler.nusers() {

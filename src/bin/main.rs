@@ -66,7 +66,7 @@ impl WebClient {
 
 #[async_trait]
 impl RequestProcessor for WebClient {
-    async fn setup(&mut self, _prime: bool) -> Result<()> {
+    async fn data_prime_init(&mut self) -> Result<()> {
         return Ok(())
     }
 
