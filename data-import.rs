@@ -21,17 +21,20 @@ fn main() {
 
         f.write_all(
             format!(
-                "const {}: &'static [(usize, usize)] = &[",
+                "const {}: &[(usize, usize)] = &[",
                 name.to_uppercase().replace('-', "_")
-            ).as_bytes(),
-        ).unwrap();
+            )
+            .as_bytes(),
+        )
+        .unwrap();
 
         let stats = File::open(&*stats).map(BufReader::new).unwrap();
         for line in stats.lines().map_while(Result::ok) {
             let mut fields = line.split_whitespace();
             f.write_all(
                 format!("({}, {}),", fields.next().unwrap(), fields.next().unwrap()).as_bytes(),
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         f.write_all(b"];\n").unwrap();

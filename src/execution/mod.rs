@@ -1,6 +1,5 @@
 use crate::LobstersRequest;
 use crate::{COMMENTS_PER_STORY, VOTES_PER_COMMENT, VOTES_PER_STORY, VOTES_PER_USER};
-use histogram_sampler;
 use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::{mem, time};
@@ -15,17 +14,16 @@ struct Sampler {
     comments_per_story: histogram_sampler::Sampler,
 }
 
-use rand;
 impl Sampler {
     fn new(scale: f64) -> Self {
-        fn adjust<'a, F>(
+        fn adjust<F>(
             hist: &'static [(usize, usize)],
             f: F,
         ) -> impl Iterator<Item = (usize, usize)>
         where
             F: Fn(f64) -> f64,
         {
-            hist.into_iter()
+            hist.iter()
                 .map(move |&(bin, n)| (bin, f(n as f64).round() as usize))
         }
 

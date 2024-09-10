@@ -102,14 +102,9 @@ where
     }
 }
 
-async fn prime<T>(
-    client: T,
-    sampler: Sampler,
-    nstories: u32,
-    in_flight: usize,
-) -> Result<()>
+async fn prime<T>(client: T, sampler: Sampler, nstories: u32, in_flight: usize) -> Result<()>
 where
-    T: RequestProcessor + Clone + Send + 'static
+    T: RequestProcessor + Clone + Send + 'static,
 {
     eprintln!("--> priming database");
     let start = time::Instant::now();
@@ -122,11 +117,11 @@ where
         let mut c = client.clone();
         futs.push(tokio::spawn(async move {
             c.process(TrawlerRequest {
-                    user: Some(uid),
-                    page: LobstersRequest::Login,
-                    is_priming: true,
-                })
-                .await
+                user: Some(uid),
+                page: LobstersRequest::Login,
+                is_priming: true,
+            })
+            .await
         }));
         maybe_await_all!(futs, in_flight);
     }
@@ -147,7 +142,8 @@ where
                     title: format!("Base article {}", id),
                 },
                 is_priming: true,
-            }).await
+            })
+            .await
         }));
         maybe_await_all!(futs, in_flight);
     }
@@ -190,7 +186,8 @@ where
                     parent: parent.map(id_to_slug),
                 },
                 is_priming: true,
-            }).await
+            })
+            .await
         }));
         maybe_await_all!(futs, in_flight);
     }
@@ -208,7 +205,7 @@ pub(crate) fn run<T>(
     prime_database: bool,
 ) -> Result<(std::time::SystemTime, f64, execution::Stats, usize)>
 where
-    T: RequestProcessor + Clone + Send + 'static
+    T: RequestProcessor + Clone + Send + 'static,
 {
     let target = BASE_OPS_PER_MIN as f64 * load.scale / 60.0;
 
@@ -322,7 +319,7 @@ where
                 let mut stats = stats.borrow_mut();
                 let hist = stats
                     .entry(rtype)
-                    .or_insert_with(crate::timing::Timeline::default)
+                    .or_default()
                     .histogram_for(issued.duration_since(start));
 
                 hist.processing(rmt_time.as_micros() as u64);

@@ -59,7 +59,10 @@ impl WebClient {
             cookies.add(c);
         }
 
-        SESSION_COOKIES.write().unwrap().insert(uid, cookies.clone());
+        SESSION_COOKIES
+            .write()
+            .unwrap()
+            .insert(uid, cookies.clone());
         Ok(cookies)
     }
 }
@@ -67,7 +70,7 @@ impl WebClient {
 #[async_trait]
 impl RequestProcessor for WebClient {
     async fn data_prime_init(&mut self) -> Result<()> {
-        return Ok(())
+        return Ok(());
     }
 
     async fn process(

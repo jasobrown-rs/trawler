@@ -23,8 +23,8 @@
 
 mod client;
 
-pub use self::client::{LobstersRequest, RequestProcessor, TrawlerRequest, Vote};
 pub use self::client::{CommentId, StoryId, UserId};
+pub use self::client::{LobstersRequest, RequestProcessor, TrawlerRequest, Vote};
 
 mod execution;
 mod timing;
@@ -39,7 +39,7 @@ include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 pub const BASE_OPS_PER_MIN: usize = 46;
 
 /// Set the parameters for a new Lobsters-like workload.
-pub struct WorkloadBuilder<> {
+pub struct WorkloadBuilder {
     load: execution::Workload,
     histogram_file: Option<String>,
     max_in_flight: usize,
@@ -107,7 +107,7 @@ impl WorkloadBuilder {
     /// the database is also scheduled to be primed before the workload begins.
     pub fn run<T>(&self, client: T, prime: bool)
     where
-        T: RequestProcessor + Clone + Send + 'static
+        T: RequestProcessor + Clone + Send + 'static,
     {
         // actually run the workload
         let (start, generated_per_sec, timing, dropped) =
