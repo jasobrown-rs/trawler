@@ -16,10 +16,7 @@ struct Sampler {
 
 impl Sampler {
     fn new(scale: f64) -> Self {
-        fn adjust<F>(
-            hist: &'static [(usize, usize)],
-            f: F,
-        ) -> impl Iterator<Item = (usize, usize)>
+        fn adjust<F>(hist: &'static [(usize, usize)], f: F) -> impl Iterator<Item = (usize, usize)>
         where
             F: Fn(f64) -> f64,
         {
