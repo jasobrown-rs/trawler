@@ -11,31 +11,14 @@ use rand::rngs::ThreadRng;
 use rand::{self, Rng};
 use std::cell::RefCell;
 use std::sync::{atomic, Arc, Mutex};
+use std::time::{Duration, Instant};
 use std::{mem, time};
+
+/// The number of concurrent operations to allow during data priming.
+const PRIMING_CONCURRENT_OPS: usize = 64;
 
 thread_local! {
     static STATS: RefCell<Stats> = RefCell::new(Stats::default());
-}
-
-macro_rules! await_all {
-    ($fu:ident) => {
-        if !$fu.is_empty() {
-            let mut futs = std::mem::replace(&mut $fu, FuturesUnordered::new());
-            tokio::spawn(async move {
-                while let Some(r) = futs.next().await {
-                    r.unwrap().unwrap();
-                }
-            });
-        }
-    };
-}
-
-macro_rules! maybe_await_all {
-    ($fu:ident, $cap:expr) => {
-        if $fu.len() >= $cap {
-            await_all!($fu);
-        }
-    };
 }
 
 fn next_request<F>(
@@ -102,7 +85,29 @@ where
     }
 }
 
-async fn prime<T>(client: T, sampler: Sampler, nstories: u32, in_flight: usize) -> Result<()>
+macro_rules! await_all {
+    ($fu:ident) => {
+        if !$fu.is_empty() {
+            let mut futs = std::mem::replace(&mut $fu, FuturesUnordered::new());
+            tokio::spawn(async move {
+                while let Some(r) = futs.next().await {
+                    r.unwrap().unwrap();
+                }
+            })
+            .await?;
+        }
+    };
+}
+
+macro_rules! maybe_await_all {
+    ($fu:ident, $cap:expr) => {
+        if $fu.len() >= $cap {
+            await_all!($fu);
+        }
+    };
+}
+
+async fn prime<T>(client: T, sampler: Sampler, concurrent_ops: usize) -> Result<()>
 where
     T: RequestProcessor + Clone + Send + 'static,
 {
@@ -111,8 +116,9 @@ where
 
     client.clone().data_prime_init().await?;
 
-    // then, log in all the users
+    // log in all the users
     let mut futs = FuturesUnordered::new();
+    eprintln!("inserting {} users ...", sampler.nusers());
     for uid in 0..sampler.nusers() {
         let mut c = client.clone();
         futs.push(tokio::spawn(async move {
@@ -123,13 +129,15 @@ where
             })
             .await
         }));
-        maybe_await_all!(futs, in_flight);
+        maybe_await_all!(futs, concurrent_ops);
     }
     await_all!(futs);
 
     let mut rng = rand::thread_rng();
-    // first, we need to prime the database stories!
+    // prime the database stories
     let mut futs = FuturesUnordered::new();
+    let nstories = sampler.nstories();
+    eprintln!("inserting {} stories ...", nstories);
     for id in 0..nstories {
         // NOTE: we're assuming that users who vote much also submit many stories
         let uid = sampler.user(&mut rng);
@@ -145,11 +153,12 @@ where
             })
             .await
         }));
-        maybe_await_all!(futs, in_flight);
+        maybe_await_all!(futs, concurrent_ops);
     }
     await_all!(futs);
 
-    // and as many comments
+    // insert comments on stories
+    eprintln!("inserting {} comments ...", sampler.ncomments());
     for id in 0..sampler.ncomments() {
         let story = id % nstories; // TODO: distribution
 
@@ -189,12 +198,15 @@ where
             })
             .await
         }));
-        maybe_await_all!(futs, in_flight);
+        maybe_await_all!(futs, concurrent_ops);
     }
 
     // wait for all priming comments
     await_all!(futs);
-    eprintln!("--> finished priming database in {:?}", start.elapsed());
+    eprintln!(
+        "--> finished priming database in {:?}",
+        start.elapsed().as_secs()
+    );
     Ok(())
 }
 
@@ -242,13 +254,12 @@ where
 
     // compute how many of each thing there will be in the database after scaling by mem_scale
     let sampler = Sampler::new(load.scale);
-    let nstories = sampler.nstories();
 
     if prime_database {
         let c = client.clone();
         let s = sampler.clone();
         rt.block_on(async move {
-            prime(c, s, nstories, in_flight).await.unwrap();
+            prime(c, s, PRIMING_CONCURRENT_OPS).await.unwrap();
         });
     }
 
@@ -260,7 +271,6 @@ where
     let ncomments = sampler.ncomments();
 
     let mut ops = 0;
-    let mut _nissued = 0;
     let npending = &*Box::leak(Box::new(atomic::AtomicUsize::new(0)));
     let mut rng = rand::thread_rng();
     let interarrival_ns = rand_distr::Exp::new(target * 1e-9).unwrap();
@@ -293,7 +303,6 @@ where
         let user = Some(sampler.user(&mut rng));
         let req = next_request(&mut pick, &sampler, &mut rng, ncomments, nstories);
 
-        _nissued += 1;
         ops += 1;
 
         let issued = next;
@@ -314,35 +323,46 @@ where
             let sjrn_time = issued.elapsed();
             npending.fetch_sub(1, atomic::Ordering::AcqRel);
 
-            r.unwrap();
-            STATS.with(|stats| {
-                let mut stats = stats.borrow_mut();
-                let hist = stats
-                    .entry(rtype)
-                    .or_default()
-                    .histogram_for(issued.duration_since(start));
+            if r.is_ok() {
+                STATS.with(|stats| {
+                    let mut stats = stats.borrow_mut();
+                    let hist = stats
+                        .entry(rtype)
+                        .or_default()
+                        .histogram_for(issued.duration_since(start));
 
-                hist.processing(rmt_time.as_micros() as u64);
-                hist.sojourn(sjrn_time.as_micros() as u64);
-            });
+                    hist.processing(rmt_time.as_micros() as u64);
+                    hist.sojourn(sjrn_time.as_micros() as u64);
+                });
+            }
         });
 
         // schedule next delivery
         next += time::Duration::from_nanos(interarrival_ns.sample(&mut rng) as u64);
     }
-    let unfinished = npending.load(atomic::Ordering::Acquire);
-    let took = start.elapsed();
 
+    // wait a short amount of time for tasks to complete,
+    let loop_end_time = Instant::now() + Duration::from_secs(60);
+    while loop_end_time > Instant::now() {
+        let cnt = npending.load(atomic::Ordering::Acquire);
+        if cnt == 0 {
+            break;
+        }
+        println!("waiting for {:?} tasks", cnt);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    let total_duration = start.elapsed();
     let _ = rt.block_on(client.shutdown());
     drop(rt);
 
-    ops -= unfinished;
-    let per_second = ops as f64 / took.as_secs_f64();
+    ops -= npending.load(atomic::Ordering::Acquire);
+    let per_second = ops as f64 / total_duration.as_secs_f64();
 
     // gather stats
     let mut stats = stats.lock().unwrap();
     for hs in stats.values_mut() {
-        hs.set_total_duration(took);
+        hs.set_total_duration(total_duration);
     }
 
     Ok((start_t, per_second, std::mem::take(&mut *stats), 0))
