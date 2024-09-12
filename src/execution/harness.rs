@@ -318,22 +318,27 @@ where
             });
             let _ = issued.elapsed();
             let sent = time::Instant::now();
-            let r = fut.await;
+            let response = fut.await;
             let rmt_time = sent.elapsed();
             let sjrn_time = issued.elapsed();
             npending.fetch_sub(1, atomic::Ordering::AcqRel);
 
-            if r.is_ok() {
-                STATS.with(|stats| {
-                    let mut stats = stats.borrow_mut();
-                    let hist = stats
-                        .entry(rtype)
-                        .or_default()
-                        .histogram_for(issued.duration_since(start));
+            match response {
+                Ok(_) => {
+                    STATS.with(|stats| {
+                        let mut stats = stats.borrow_mut();
+                        let hist = stats
+                            .entry(rtype)
+                            .or_default()
+                            .histogram_for(issued.duration_since(start));
 
-                    hist.processing(rmt_time.as_micros() as u64);
-                    hist.sojourn(sjrn_time.as_micros() as u64);
-                });
+                        hist.processing(rmt_time.as_micros() as u64);
+                        hist.sojourn(sjrn_time.as_micros() as u64);
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Error recived: {:?}", e)
+                }
             }
         });
 
