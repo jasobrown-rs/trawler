@@ -116,14 +116,10 @@ impl WorkloadBuilder {
     /// The provided client must be able to (asynchronously) create a `Service<TrawlerRequest>`. To
     /// do so, it must implement `Service<bool>`, where the boolean parameter indicates whether
     /// the database is also scheduled to be primed before the workload begins.
-    pub fn run<T>(&self, client: T, prime: bool)
+    pub async fn run<T>(&self, client: T, prime: bool) -> Result<()>
     where
         T: RequestProcessor + Clone + Send + 'static,
     {
-        // actually run the workload
-        let (start, generated_per_sec, timing, dropped) =
-            execution::harness::run(self.load.clone(), self.max_in_flight, client, prime).unwrap();
-
         run(self.load.clone(), self.max_in_flight, client, prime, self.report_interval, self.histogram_file.clone()).await
     }
 }

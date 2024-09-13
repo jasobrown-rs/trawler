@@ -233,7 +233,8 @@ struct Options {
     prefix: Option<String>,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
     let options = Options::parse();
 
     let mut wl = trawler::WorkloadBuilder::default();
@@ -244,5 +245,5 @@ fn main() {
         wl.with_histogram(h.clone());
     }
 
-    wl.run(WebClient::new(&options.prefix.unwrap()), options.prime);
+    wl.run(WebClient::new(&options.prefix.unwrap()), options.prime).await
 }

@@ -14,10 +14,6 @@ categories = ["web-programming", "command-line-utilities", "development-tools::p
 
 build = "data-import.rs"
 
-#[badges]
-# travis-ci = { repository = "jonhoo/trawler" }
-# maintenance = { status = "experimental" }
-
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
@@ -32,9 +28,7 @@ rand_distr = "0.4"
 slog = "2.0.6"
 slog-term = "2.0.1"
 time = "0.2"
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
-tower-make = "0.3"
-tower-service = "0.3"
+tokio = { version = "1", features = ["full"] }
 zipf = "7"
 
 # used by the WebClient binary
