@@ -43,8 +43,7 @@ impl StatsReporter {
     }
 
     pub fn dump_metrics(&self) {
-        // TODO impl me!
-        self.print_final();
+        self.print();
     }
 
     pub fn finish(&mut self, end_stats: EndStats) {
@@ -59,11 +58,11 @@ impl StatsReporter {
             timeline.set_total_duration(end_stats.total_duration);
         }
 
+        self.print();
+
         if let Some(ref h) = end_stats.histo_file {
             self.write_histo(end_stats.start, h)
         }
-
-        self.print_final();
     }
 
     fn write_histo(&self, start: SystemTime, file_name: &str) {
@@ -90,8 +89,8 @@ impl StatsReporter {
         }
     }
 
-    fn print_final(&self) {
-        println!("{:<12}\t{:<12}\tpct\tµs", "# op", "metric");
+    fn print(&self) {
+        println!("\n{:<12}\t{:<12}\t{:<12}\tp50\tp95\tp99\tp100", "# op", "metric", "count");
         for variant in LobstersRequest::all() {
             if let Some((proc_hist, sjrn_hist)) =
                 self.stats.get(variant.name()).and_then(|h| h.last())
@@ -100,20 +99,20 @@ impl StatsReporter {
                     if h.max() == 0 {
                         continue;
                     }
-                    for &pct in &[50, 95, 99] {
-                        println!(
-                            "{:<12}\t{:<12}\t{}\t{:.2}",
-                            variant.name(),
-                            metric,
-                            pct,
-                            h.value_at_quantile(pct as f64 / 100.0),
-                        );
-                    }
+                    let count = h.len();
+                    let p50 = h.value_at_quantile(50 as f64 / 100.0);
+                    let p95 = h.value_at_quantile(95 as f64 / 100.0);
+                    let p99 = h.value_at_quantile(99 as f64 / 100.0);
+                    let p100 = h.value_at_quantile(100 as f64 / 100.0);
                     println!(
-                        "{:<12}\t{:<12}\t100\t{:.2}",
+                        "{:<12}\t{:<12}\t{:<12}\t{:.2}\t{:.2}\t{:.2}\t{:.2}",
                         variant.name(),
                         metric,
-                        h.max()
+                        count,
+                        p50,
+                        p95,
+                        p99,
+                        p100,
                     );
                 }
             }
