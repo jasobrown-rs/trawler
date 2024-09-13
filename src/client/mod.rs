@@ -144,24 +144,24 @@ impl LobstersRequest {
     /// Enumerate all possible request types in a deterministic order.
     pub fn all() -> Vec<LobstersRequest> {
         vec![
-            LobstersRequest::Frontpage,
-            LobstersRequest::Recent,
-            LobstersRequest::User(0),
-            LobstersRequest::Story([0; 6]),
-            LobstersRequest::Login,
-            LobstersRequest::Logout,
-            LobstersRequest::StoryVote([0; 6], Vote::Up),
-            LobstersRequest::CommentVote([0; 6], Vote::Up),
-            LobstersRequest::Submit {
-                id: [0; 6],
-                title: String::new(),
-            },
             LobstersRequest::Comment {
                 id: [0; 6],
                 story: [0; 6],
                 parent: None,
             },
             LobstersRequest::Comments,
+            LobstersRequest::CommentVote([0; 6], Vote::Up),
+            LobstersRequest::Frontpage,
+            LobstersRequest::Login,
+            LobstersRequest::Logout,
+            LobstersRequest::Recent,
+            LobstersRequest::Submit {
+                id: [0; 6],
+                title: String::new(),
+            },
+            LobstersRequest::Story([0; 6]),
+            LobstersRequest::StoryVote([0; 6], Vote::Up),
+            LobstersRequest::User(0),
         ]
     }
 
