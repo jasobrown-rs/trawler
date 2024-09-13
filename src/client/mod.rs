@@ -142,8 +142,8 @@ pub enum LobstersRequest {
 
 impl LobstersRequest {
     /// Enumerate all possible request types in a deterministic order.
-    pub fn all() -> &'static [LobstersRequest] {
-        &[
+    pub fn all() -> Vec<LobstersRequest> {
+        vec![
             LobstersRequest::Frontpage,
             LobstersRequest::Recent,
             LobstersRequest::User(0),
@@ -165,6 +165,7 @@ impl LobstersRequest {
         ]
     }
 
+    /// Get a proper name for this variant.
     pub fn name(&self) -> &str {
         match self {
             LobstersRequest::Frontpage { .. } => "Frontpage",
