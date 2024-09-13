@@ -25,12 +25,14 @@ mod client;
 
 pub use self::client::{CommentId, StoryId, UserId};
 pub use self::client::{LobstersRequest, RequestProcessor, TrawlerRequest, Vote};
+use execution::harness::run;
 
 mod execution;
 mod timing;
 
-use std::fs;
+use anyhow::Result;
 use std::time;
+use tokio::time::Duration;
 
 include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 
@@ -38,11 +40,14 @@ include!(concat!(env!("OUT_DIR"), "/statistics.rs"));
 /// 2018-03-27 01:26:49 according to https://lobste.rs/s/cqnzl5/#c_jz5hqv.
 pub const BASE_OPS_PER_MIN: usize = 46;
 
+const DEFAULT_REPORT_INTERVAL_SECS: u64 = 10;
+
 /// Set the parameters for a new Lobsters-like workload.
 pub struct WorkloadBuilder {
     load: execution::Workload,
     histogram_file: Option<String>,
     max_in_flight: usize,
+    report_interval: Duration,
 }
 
 impl Default for WorkloadBuilder {
@@ -50,11 +55,11 @@ impl Default for WorkloadBuilder {
         WorkloadBuilder {
             load: execution::Workload {
                 scale: 1.0,
-
-                runtime: time::Duration::from_secs(30),
+                runtime: Duration::from_secs(30),
             },
             histogram_file: None,
             max_in_flight: 20,
+            report_interval: Duration::from_secs(DEFAULT_REPORT_INTERVAL_SECS),
         }
     }
 }
@@ -82,6 +87,12 @@ impl WorkloadBuilder {
     /// backend. Defaults to 20.
     pub fn in_flight(&mut self, max: usize) -> &mut Self {
         self.max_in_flight = max;
+        self
+    }
+
+    /// The time interval, in seconds, betweeen printing stats to the console.
+    pub fn report_interval(&mut self, report_interval_secs: u32) -> &mut Self {
+        self.report_interval = Duration::from_secs(report_interval_secs as u64);
         self
     }
 
