@@ -363,29 +363,29 @@ where
 async fn stats_report(
     report_interval_sec: Duration,
     mut stats_reporter: StatsReporter,
-    mut stat_tx: Receiver<Stat>,
-    mut stop_tx: Receiver<EndStats>,
+    mut stat_rx: Receiver<Stat>,
+    mut stop_rx: Receiver<EndStats>,
 ) -> Result<()> {
     let mut interval = tokio::time::interval(report_interval_sec);
 
-    tokio::select! {
-        biased;
-        // bias toward dumping stats on time, so observers do not get worried
-        _ = interval.tick() => stats_reporter.dump_metrics(),
+    loop {
+        tokio::select! {
+            biased;
+            // bias toward dumping stats on time, so observers do not get worried
+            _ = interval.tick() => stats_reporter.dump_metrics(),
 
-        stat = stat_tx.recv() => {
-            if let Some(stat) = stat {
-                stats_reporter.report(stat);
+            stat = stat_rx.recv() => {
+                if let Some(stat) = stat {
+                    stats_reporter.report(stat);
+                }
             }
-        }
 
-        end_stats = stop_tx.recv() => {
-            if let Some(end_stats) = end_stats {
-                stats_reporter.finish(end_stats);
+            end_stats = stop_rx.recv() => {
+                if let Some(end_stats) = end_stats {
+                    stats_reporter.finish(end_stats);
+                }
+                return Ok(());
             }
-            return Ok(());
         }
     }
-
-    Ok(())
 }
