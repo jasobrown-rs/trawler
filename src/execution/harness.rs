@@ -1,6 +1,6 @@
 use crate::client::{LobstersRequest, RequestProcessor, TrawlerRequest, Vote};
-use crate::execution::Stats;
 use crate::execution::{self, id_to_slug, Sampler, MAX_SLUGGABLE_ID};
+use crate::timing::{EndStats, Stat, StatsReporter};
 use crate::BASE_OPS_PER_MIN;
 
 use anyhow::Result;
@@ -9,17 +9,14 @@ use futures_util::stream::StreamExt;
 use rand::distributions::Distribution;
 use rand::rngs::ThreadRng;
 use rand::{self, Rng};
-use std::cell::RefCell;
-use std::sync::{atomic, Arc, Mutex};
-use std::time::{Duration, Instant};
-use std::{mem, time};
+use tokio::sync::mpsc::{channel, Receiver};
+
+use std::sync::atomic;
+use std::time;
+use tokio::time::{Duration, Instant};
 
 /// The number of concurrent operations to allow during data priming.
 const PRIMING_CONCURRENT_OPS: usize = 64;
-
-thread_local! {
-    static STATS: RefCell<Stats> = RefCell::new(Stats::default());
-}
 
 fn next_request<F>(
     pick: &mut F,
@@ -210,12 +207,14 @@ where
     Ok(())
 }
 
-pub(crate) fn run<T>(
+pub(crate) async fn run<T>(
     load: execution::Workload,
     in_flight: usize,
     mut client: T,
     prime_database: bool,
-) -> Result<(std::time::SystemTime, f64, execution::Stats, usize)>
+    report_interval: Duration,
+    histo_file: Option<String>,
+) -> Result<()>
 where
     T: RequestProcessor + Clone + Send + 'static,
 {
@@ -230,37 +229,13 @@ where
         "one generator thread cannot generate that much load"
     );
 
-    let stats: Arc<Mutex<Stats>> = Arc::default();
-    let rt = {
-        let stats = stats.clone();
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .on_thread_stop(move || {
-                STATS.with(|my_stats| {
-                    let mut stats = stats.lock().unwrap();
-                    for (rtype, my_h) in my_stats.borrow_mut().drain() {
-                        use std::collections::hash_map::Entry;
-                        match stats.entry(rtype) {
-                            Entry::Vacant(v) => {
-                                v.insert(my_h);
-                            }
-                            Entry::Occupied(mut h) => h.get_mut().merge(&my_h),
-                        }
-                    }
-                });
-            })
-            .build()?
-    };
-
     // compute how many of each thing there will be in the database after scaling by mem_scale
     let sampler = Sampler::new(load.scale);
 
     if prime_database {
         let c = client.clone();
         let s = sampler.clone();
-        rt.block_on(async move {
-            prime(c, s, PRIMING_CONCURRENT_OPS).await.unwrap();
-        });
+        prime(c, s, PRIMING_CONCURRENT_OPS).await?;
     }
 
     let start_t = time::SystemTime::now();
@@ -274,6 +249,19 @@ where
     let npending = &*Box::leak(Box::new(atomic::AtomicUsize::new(0)));
     let mut rng = rand::thread_rng();
     let interarrival_ns = rand_distr::Exp::new(target * 1e-9).unwrap();
+
+    let stats_reporter = StatsReporter::default();
+    let (stat_sender, stat_receiver) = channel(in_flight * 2);
+    let (stats_stop_sender, stats_stop_receiver) = channel(1);
+
+    let _ = tokio::spawn(async move {
+        let _ = stats_report(
+            report_interval,
+            stats_reporter,
+            stat_receiver,
+            stats_stop_receiver,
+        ).await;
+    });
 
     let mut next = time::Instant::now();
     while next < end {
@@ -306,11 +294,13 @@ where
         ops += 1;
 
         let issued = next;
-        let rtype = mem::discriminant(&req);
         npending.fetch_add(1, atomic::Ordering::AcqRel);
 
         let mut c = client.clone();
-        rt.spawn(async move {
+        let stat_sender = stat_sender.clone();
+
+        tokio::spawn(async move {
+            let request_name = req.name().to_string();
             let fut = c.process(TrawlerRequest {
                 user,
                 page: req,
@@ -319,22 +309,17 @@ where
             let _ = issued.elapsed();
             let sent = time::Instant::now();
             let response = fut.await;
-            let rmt_time = sent.elapsed();
-            let sjrn_time = issued.elapsed();
             npending.fetch_sub(1, atomic::Ordering::AcqRel);
 
             match response {
                 Ok(_) => {
-                    STATS.with(|stats| {
-                        let mut stats = stats.borrow_mut();
-                        let hist = stats
-                            .entry(rtype)
-                            .or_default()
-                            .histogram_for(issued.duration_since(start));
-
-                        hist.processing(rmt_time.as_micros() as u64);
-                        hist.sojourn(sjrn_time.as_micros() as u64);
-                    });
+                    let stat = Stat {
+                        request_name,
+                        time_since_start: issued.duration_since(start),
+                        processing_time: sent.elapsed(),
+                        sojourn_time: issued.elapsed(),
+                    };
+                    let _ = stat_sender.send(stat).await;
                 }
                 Err(e) => {
                     eprintln!("Error recived: {:?}", e)
@@ -358,17 +343,49 @@ where
     }
 
     let total_duration = start.elapsed();
-    let _ = rt.block_on(client.shutdown());
-    drop(rt);
-
     ops -= npending.load(atomic::Ordering::Acquire);
     let per_second = ops as f64 / total_duration.as_secs_f64();
 
-    // gather stats
-    let mut stats = stats.lock().unwrap();
-    for hs in stats.values_mut() {
-        hs.set_total_duration(total_duration);
+    let _ = stats_stop_sender.send(EndStats {
+        start: start_t,
+        scale: load.scale,
+        generated_per_sec: per_second,
+        dropped: 0,
+        total_duration,
+        histo_file,
+    });
+
+    client.shutdown().await?;
+
+    Ok(())
+}
+
+async fn stats_report(
+    report_interval_sec: Duration,
+    mut stats_reporter: StatsReporter,
+    mut stat_tx: Receiver<Stat>,
+    mut stop_tx: Receiver<EndStats>,
+) -> Result<()> {
+    let mut interval = tokio::time::interval(report_interval_sec);
+
+    tokio::select! {
+        biased;
+        // bias toward dumping stats on time, so observers do not get worried
+        _ = interval.tick() => stats_reporter.dump_metrics(),
+
+        stat = stat_tx.recv() => {
+            if let Some(stat) = stat {
+                stats_reporter.report(stat);
+            }
+        }
+
+        end_stats = stop_tx.recv() => {
+            if let Some(end_stats) = end_stats {
+                stats_reporter.finish(end_stats);
+            }
+            return Ok(());
+        }
     }
 
-    Ok((start_t, per_second, std::mem::take(&mut *stats), 0))
+    Ok(())
 }
