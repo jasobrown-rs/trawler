@@ -113,62 +113,6 @@ impl WorkloadBuilder {
         let (start, generated_per_sec, timing, dropped) =
             execution::harness::run(self.load.clone(), self.max_in_flight, client, prime).unwrap();
 
-        // all done!
-        println!(
-            "# target ops/s: {:.2}",
-            BASE_OPS_PER_MIN as f64 * self.load.scale / 60.0,
-        );
-        println!("# generated ops/s: {:.2}", generated_per_sec);
-        println!("# dropped requests: {}", dropped);
-
-        if let Some(ref h) = self.histogram_file {
-            match fs::File::create(h) {
-                Ok(mut f) => {
-                    use hdrhistogram::serialization::interval_log;
-                    use hdrhistogram::serialization::V2DeflateSerializer;
-                    let mut s = V2DeflateSerializer::new();
-                    let mut w = interval_log::IntervalLogWriterBuilder::new()
-                        .with_base_time(start)
-                        .begin_log_with(&mut f, &mut s)
-                        .unwrap();
-                    for variant in LobstersRequest::all() {
-                        if let Some(t) = timing.get(&variant) {
-                            t.write(&mut w).unwrap();
-                        } else {
-                            timing::Timeline::default().write(&mut w).unwrap();
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("failed to open histogram file for writing: {:?}", e);
-                }
-            }
-        }
-
-        println!("{:<12}\t{:<12}\tpct\tµs", "# op", "metric");
-        for variant in LobstersRequest::all() {
-            if let Some((proc_hist, sjrn_hist)) = timing.get(&variant).and_then(|h| h.last()) {
-                for (metric, h) in &[("processing", proc_hist), ("sojourn", sjrn_hist)] {
-                    if h.max() == 0 {
-                        continue;
-                    }
-                    for &pct in &[50, 95, 99] {
-                        println!(
-                            "{:<12}\t{:<12}\t{}\t{:.2}",
-                            LobstersRequest::variant_name(&variant),
-                            metric,
-                            pct,
-                            h.value_at_quantile(pct as f64 / 100.0),
-                        );
-                    }
-                    println!(
-                        "{:<12}\t{:<12}\t100\t{:.2}",
-                        LobstersRequest::variant_name(&variant),
-                        metric,
-                        h.max()
-                    );
-                }
-            }
-        }
+        run(self.load.clone(), self.max_in_flight, client, prime, self.report_interval, self.histogram_file.clone()).await
     }
 }

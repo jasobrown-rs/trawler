@@ -140,70 +140,44 @@ pub enum LobstersRequest {
     },
 }
 
-use std::mem;
-use std::vec;
 impl LobstersRequest {
     /// Enumerate all possible request types in a deterministic order.
-    pub fn all() -> vec::IntoIter<mem::Discriminant<Self>> {
-        vec![
-            mem::discriminant(&LobstersRequest::Story([0; 6])),
-            mem::discriminant(&LobstersRequest::Frontpage),
-            mem::discriminant(&LobstersRequest::User(0)),
-            mem::discriminant(&LobstersRequest::Comments),
-            mem::discriminant(&LobstersRequest::Recent),
-            mem::discriminant(&LobstersRequest::CommentVote([0; 6], Vote::Up)),
-            mem::discriminant(&LobstersRequest::StoryVote([0; 6], Vote::Up)),
-            mem::discriminant(&LobstersRequest::Comment {
+    pub fn all() -> &'static [LobstersRequest] {
+        &[
+            LobstersRequest::Frontpage,
+            LobstersRequest::Recent,
+            LobstersRequest::User(0),
+            LobstersRequest::Story([0; 6]),
+            LobstersRequest::Login,
+            LobstersRequest::Logout,
+            LobstersRequest::StoryVote([0; 6], Vote::Up),
+            LobstersRequest::CommentVote([0; 6], Vote::Up),
+            LobstersRequest::Submit {
+                id: [0; 6],
+                title: String::new(),
+            },
+            LobstersRequest::Comment {
                 id: [0; 6],
                 story: [0; 6],
                 parent: None,
-            }),
-            mem::discriminant(&LobstersRequest::Login),
-            mem::discriminant(&LobstersRequest::Submit {
-                id: [0; 6],
-                title: String::new(),
-            }),
-            mem::discriminant(&LobstersRequest::Logout),
+            },
+            LobstersRequest::Comments,
         ]
-        .into_iter()
     }
 
-    /// Give a textual representation of the given `LobstersRequest` discriminant.
-    ///
-    /// Useful for printing the keys of the maps of histograms returned by `run`.
-    pub fn variant_name(v: &mem::Discriminant<Self>) -> &'static str {
-        match *v {
-            d if d == mem::discriminant(&LobstersRequest::Frontpage) => "Frontpage",
-            d if d == mem::discriminant(&LobstersRequest::Recent) => "Recent",
-            d if d == mem::discriminant(&LobstersRequest::Comments) => "Comments",
-            d if d == mem::discriminant(&LobstersRequest::User(0)) => "User",
-            d if d == mem::discriminant(&LobstersRequest::Story([0; 6])) => "Story",
-            d if d == mem::discriminant(&LobstersRequest::Login) => "Login",
-            d if d == mem::discriminant(&LobstersRequest::Logout) => "Logout",
-            d if d == mem::discriminant(&LobstersRequest::StoryVote([0; 6], Vote::Up)) => {
-                "StoryVote"
-            }
-            d if d == mem::discriminant(&LobstersRequest::CommentVote([0; 6], Vote::Up)) => {
-                "CommentVote"
-            }
-            d if d
-                == mem::discriminant(&LobstersRequest::Submit {
-                    id: [0; 6],
-                    title: String::new(),
-                }) =>
-            {
-                "Submit"
-            }
-            d if d
-                == mem::discriminant(&LobstersRequest::Comment {
-                    id: [0; 6],
-                    story: [0; 6],
-                    parent: None,
-                }) =>
-            {
-                "Comment"
-            }
-            _ => unreachable!(),
+    pub fn name(&self) -> &str {
+        match self {
+            LobstersRequest::Frontpage { .. } => "Frontpage",
+            LobstersRequest::Recent { .. } => "Recent",
+            LobstersRequest::User { .. } => "User",
+            LobstersRequest::Story { .. } => "Story",
+            LobstersRequest::Login { .. } => "Login",
+            LobstersRequest::Logout { .. } => "Logout",
+            LobstersRequest::StoryVote { .. } => "StoryVote",
+            LobstersRequest::CommentVote { .. } => "CommentVote",
+            LobstersRequest::Submit { .. } => "Submit",
+            LobstersRequest::Comment { .. } => "Comment",
+            LobstersRequest::Comments { .. } => "Comments",
         }
     }
 
